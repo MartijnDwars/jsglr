@@ -238,8 +238,23 @@ public class TreeBuilder extends TopdownTreeBuilder {
 		boolean isCompletion = node.isProposal();
 		boolean isNestedCompletion = node.isNestedProposal();
 		boolean isSinglePlaceholderCompletion = node.isSinglePlaceholderInsertion();
-		
-		
+
+		// BUGFIX(mtd): Fix parsing concrete syntax list variable (e.g. in foo.bar(e_arg*) make sure e_arg* becomes a meta-listvar("e_arg")
+		if (isList && subnodes.length == 1) {
+			AbstractParseNode childNode = subnodes[0];
+
+			if (!childNode.isParseProductionNode()) {
+				LabelInfo childLabel = labels[childNode.getLabel() - labelStart];
+
+				if (childLabel.isList()) {
+					if (childLabel.isNonContextFree()) {
+						if ("meta-listvar".equals(childLabel.getMetaVarConstructor())) {
+							return childNode.toTreeTopdown(this);
+						}
+					}
+				}
+			}
+		}
 		
 		if (!inLexicalContext && label.isNonContextFree())
 			inLexicalContext = lexicalStart = true;
@@ -273,18 +288,21 @@ public class TreeBuilder extends TopdownTreeBuilder {
 			while (!nodes.isEmpty()) {
 				AbstractParseNode current = nodes.pop();
 
-				LabelInfo currentLabel = current.isAmbNode()
-						|| current.isParseProductionNode() ? null
-						: labels[current.getLabel() - labelStart];
+				LabelInfo currentLabel = current.isAmbNode() || current.isParseProductionNode() ? null : labels[current.getLabel() - labelStart];
+				AbstractParseNode[] currentChildren = current.getChildren();
 
-				if (currentLabel != null
-						&& currentLabel.isList()
-						&& (label.getSort() == null ? currentLabel.getSort() == null
-								: label.getSort()
-										.equals(currentLabel.getSort())))
-					for (int i = current.getChildren().length - 1; i >= 0; i--)
+				// BUGFIX(mtd): Ensure meta-listvar in e.g. `method() { bstm_foo* if(true) {} bstm_foo* }` becomes [meta-listvar("bstm_foo*"), If(...), meta-listvar("bstm*")]
+				if (currentLabel != null && currentLabel.isList() && currentChildren.length == 1 && !currentChildren[0].isParseProductionNode() && labels[currentChildren[0].getLabel() - labelStart].isVar()) {
+					Object child = current.getChildren()[0].toTreeTopdown(this);
+
+					if (child != null) {
+						children.add(child);
+					}
+				} else if (currentLabel != null && currentLabel.isList() && (label.getSort() == null ? currentLabel.getSort() == null : label.getSort().equals(currentLabel.getSort()))) {
+					for (int i = current.getChildren().length - 1; i >= 0; i--) {
 						nodes.push(current.getChildren()[i]);
-				else {
+					}
+				} else {
 					Object child;
 					if (inLexicalContext && current.isParseProductionChain())
 						child = chainToTreeTopdown(current);
